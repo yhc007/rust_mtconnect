@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(curl:*)",
+      "Bash(chmod:*)",
+      "Bash(/home/root1/Work/MTConnect/Rust/test_parse.sh)",
+      "Bash(timeout 5 cargo run:*)",
+      "Bash(cargo run:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
