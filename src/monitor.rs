@@ -66,7 +66,8 @@ impl Default for DeviceInfo {
 
 #[derive(Debug, Clone)]
 struct AgentStatus {
-    ip: String,
+    url: String,
+    name: String,
     status: ConnectionStatus,
     last_update: String,
     devices: Vec<DeviceInfo>,
@@ -87,21 +88,22 @@ struct App {
 impl App {
     fn new() -> Self {
         let remote_agents = vec![
-            "192.168.20.10",
-            "192.168.20.20",
-            "192.168.20.30",
-            "192.168.20.40",
-            "192.168.20.50",
-            "192.168.20.60",
-            "192.168.20.70",
-            "192.168.20.80",
-            "192.168.20.100",
+            ("http://192.168.10.5:5000", "HCN6800"),
+            ("http://192.168.10.5:5001", "QT350-1"),
+            ("http://192.168.10.5:5002", "QT350-2"),
+            ("http://192.168.10.5:5003", "QT350-3"),
+            ("http://192.168.10.5:5004", "QT350-4"),
+            ("http://192.168.10.5:5005", "MNT600-1"),
+            ("http://192.168.10.5:5006", "MNT600S-1"),
+            ("http://192.168.10.5:5007", "MNT600-2"),
+            ("http://192.168.10.5:5008", "MNT600S-2"),
         ];
 
         let agents = remote_agents
             .iter()
-            .map(|ip| AgentStatus {
-                ip: ip.to_string(),
+            .map(|(url, name)| AgentStatus {
+                url: url.to_string(),
+                name: name.to_string(),
                 status: ConnectionStatus::Checking,
                 last_update: "Never".to_string(),
                 devices: Vec::new(),
@@ -232,12 +234,12 @@ fn parse_device_info(xml: &str) -> Vec<DeviceInfo> {
     devices
 }
 
-async fn fetch_agent_data(ip: String, agents: Arc<RwLock<Vec<AgentStatus>>>) {
+async fn fetch_agent_data(base_url: String, name: String, agents: Arc<RwLock<Vec<AgentStatus>>>) {
     let client = Client::builder(TokioExecutor::new()).build_http();
 
     loop {
         // Fetch current data
-        let url = format!("http://{}:5000/current", ip);
+        let url = format!("{}/current", base_url);
 
         match url.parse::<hyper::Uri>() {
             Ok(uri) => {
@@ -265,37 +267,37 @@ async fn fetch_agent_data(ip: String, agents: Arc<RwLock<Vec<AgentStatus>>>) {
 
                                                     // Update agent status
                                                     let mut agents_lock = agents.write().await;
-                                                    if let Some(agent) = agents_lock.iter_mut().find(|a| a.ip == ip) {
+                                                    if let Some(agent) = agents_lock.iter_mut().find(|a| a.name == name) {
                                                         agent.status = ConnectionStatus::Connected;
                                                         agent.last_update = Utc::now().format("%H:%M:%S").to_string();
                                                         agent.devices = devices;
                                                     }
                                                 }
                                                 Err(_) => {
-                                                    update_failed(&agents, &ip).await;
+                                                    update_failed(&agents, &name).await;
                                                 }
                                             }
                                         }
                                         Err(_) => {
-                                            update_failed(&agents, &ip).await;
+                                            update_failed(&agents, &name).await;
                                         }
                                     }
                                 } else {
-                                    update_failed(&agents, &ip).await;
+                                    update_failed(&agents, &name).await;
                                 }
                             }
                             _ => {
-                                update_failed(&agents, &ip).await;
+                                update_failed(&agents, &name).await;
                             }
                         }
                     }
                     Err(_) => {
-                        update_failed(&agents, &ip).await;
+                        update_failed(&agents, &name).await;
                     }
                 }
             }
             Err(_) => {
-                update_failed(&agents, &ip).await;
+                update_failed(&agents, &name).await;
             }
         }
 
@@ -303,9 +305,9 @@ async fn fetch_agent_data(ip: String, agents: Arc<RwLock<Vec<AgentStatus>>>) {
     }
 }
 
-async fn update_failed(agents: &Arc<RwLock<Vec<AgentStatus>>>, ip: &str) {
+async fn update_failed(agents: &Arc<RwLock<Vec<AgentStatus>>>, name: &str) {
     let mut agents_lock = agents.write().await;
-    if let Some(agent) = agents_lock.iter_mut().find(|a| a.ip == ip) {
+    if let Some(agent) = agents_lock.iter_mut().find(|a| a.name == name) {
         agent.status = ConnectionStatus::Failed;
         agent.devices.clear();
     }
@@ -384,7 +386,7 @@ fn ui<B: Backend>(f: &mut Frame, app: &App, agents: &[AgentStatus]) {
                     format!("{} ", status_symbol),
                     Style::default().fg(status_color).add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(format!("{:15} ", agent.ip)),
+                Span::raw(format!("{:12} ", agent.name)),
                 Span::styled(
                     format!("Devices: {:2} ", agent.devices.len()),
                     Style::default().fg(Color::White),
@@ -413,8 +415,12 @@ fn ui<B: Backend>(f: &mut Frame, app: &App, agents: &[AgentStatus]) {
     if let Some(selected) = agents.get(app.selected_agent) {
         let mut detail_lines = vec![
             Line::from(vec![
-                Span::styled("IP: ", Style::default().fg(Color::Yellow)),
-                Span::raw(&selected.ip),
+                Span::styled("Name: ", Style::default().fg(Color::Yellow)),
+                Span::raw(&selected.name),
+            ]),
+            Line::from(vec![
+                Span::styled("URL: ", Style::default().fg(Color::Yellow)),
+                Span::raw(&selected.url),
             ]),
             Line::from(vec![
                 Span::styled("Status: ", Style::default().fg(Color::Yellow)),
@@ -577,7 +583,7 @@ async fn run_app<B: Backend>(
     for agent in agents_for_fetch {
         let agents_clone = Arc::clone(&app.agents);
         tokio::spawn(async move {
-            fetch_agent_data(agent.ip, agents_clone).await;
+            fetch_agent_data(agent.url, agent.name, agents_clone).await;
         });
     }
 

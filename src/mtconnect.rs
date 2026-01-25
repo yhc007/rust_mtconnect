@@ -7,6 +7,7 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
@@ -16,7 +17,7 @@ pub struct MTConnectAgent {
     version: String,
     devices: Vec<MTConnectDevice>,
     sequence: u64,
-    remote_agents: Vec<String>, // IP 주소 리스트
+    remote_agents: Vec<(String, String)>, // (base_url, device_name) 리스트
     client: Arc<Client<HttpConnector, Full<Bytes>>>,
     cached_data: Arc<RwLock<HashMap<String, String>>>, // IP별 캐시된 데이터
 }
@@ -42,15 +43,15 @@ pub struct DataItem {
 impl MTConnectAgent {
     pub fn new() -> Self {
         let remote_agents = vec![
-            "192.168.20.10".to_string(),
-            "192.168.20.20".to_string(),
-            "192.168.20.30".to_string(),
-            "192.168.20.40".to_string(),
-            "192.168.20.50".to_string(),
-            "192.168.20.60".to_string(),
-            "192.168.20.70".to_string(),
-            "192.168.20.80".to_string(),
-            "192.168.20.100".to_string(),
+            ("http://192.168.10.5:5000".to_string(), "HCN6800".to_string()),
+            ("http://192.168.10.5:5001".to_string(), "QT350-1".to_string()),
+            ("http://192.168.10.5:5002".to_string(), "QT350-2".to_string()),
+            ("http://192.168.10.5:5003".to_string(), "QT350-3".to_string()),
+            ("http://192.168.10.5:5004".to_string(), "QT350-4".to_string()),
+            ("http://192.168.10.5:5005".to_string(), "MNT600-1".to_string()),
+            ("http://192.168.10.5:5006".to_string(), "MNT600S-1".to_string()),
+            ("http://192.168.10.5:5007".to_string(), "MNT600-2".to_string()),
+            ("http://192.168.10.5:5008".to_string(), "MNT600S-2".to_string()),
         ];
 
         let client = Arc::new(
@@ -139,13 +140,14 @@ impl MTConnectAgent {
         xml.push_str("\"/>\n");
         xml.push_str("  <Devices>\n");
 
-        // 모든 IP에서 병렬로 데이터 가져오기
+        // 모든 에이전트에서 병렬로 데이터 가져오기
         let mut tasks = Vec::new();
-        for ip in &self.remote_agents {
+        for (base_url, device_name) in &self.remote_agents {
             let client = Arc::clone(&self.client);
-            let ip_clone = ip.clone();
+            let base_url_clone = base_url.clone();
+            let device_name_clone = device_name.clone();
             tasks.push(tokio::spawn(async move {
-                let url = format!("http://{}:5000/probe", ip_clone);
+                let url = format!("{}/probe", base_url_clone);
                 match url.parse::<hyper::Uri>() {
                     Ok(uri) => {
                         let req = hyper::Request::builder()
@@ -163,7 +165,7 @@ impl MTConnectAgent {
                                                 Ok(collected) => {
                                                     let bytes: Bytes = collected.to_bytes();
                                                     match String::from_utf8(bytes.to_vec()) {
-                                                        Ok(content) => Some((ip_clone, content)),
+                                                        Ok(content) => Some((device_name_clone, content)),
                                                         Err(_) => None,
                                                     }
                                                 }
@@ -186,12 +188,12 @@ impl MTConnectAgent {
 
         // 결과 수집
         for task in tasks {
-            if let Ok(Some((ip, content))) = task.await {
+            if let Ok(Some((device_name, content))) = task.await {
                 // XML에서 <Devices>...</Devices> 내용 추출하여 추가
                 if let Some(devices_start) = content.find("<Devices>") {
                     if let Some(devices_end) = content.find("</Devices>") {
                         let devices_content = &content[devices_start + 9..devices_end];
-                        xml.push_str(&format!("    <!-- Data from {} -->\n", ip));
+                        xml.push_str(&format!("    <!-- Data from {} -->\n", device_name));
                         xml.push_str(devices_content);
                     }
                 }
@@ -283,13 +285,14 @@ impl MTConnectAgent {
         xml.push_str("\"/>\n");
         xml.push_str("  <Streams>\n");
 
-        // 모든 IP에서 병렬로 데이터 가져오기
+        // 모든 에이전트에서 병렬로 데이터 가져오기
         let mut tasks = Vec::new();
-        for ip in &self.remote_agents {
+        for (base_url, device_name) in &self.remote_agents {
             let client = Arc::clone(&self.client);
-            let ip_clone = ip.clone();
+            let base_url_clone = base_url.clone();
+            let device_name_clone = device_name.clone();
             tasks.push(tokio::spawn(async move {
-                let url = format!("http://{}:5000/current", ip_clone);
+                let url = format!("{}/current", base_url_clone);
                 match url.parse::<hyper::Uri>() {
                     Ok(uri) => {
                         let req = hyper::Request::builder()
@@ -307,7 +310,7 @@ impl MTConnectAgent {
                                                 Ok(collected) => {
                                                     let bytes: Bytes = collected.to_bytes();
                                                     match String::from_utf8(bytes.to_vec()) {
-                                                        Ok(content) => Some((ip_clone, content)),
+                                                        Ok(content) => Some((device_name_clone, content)),
                                                         Err(_) => None,
                                                     }
                                                 }
@@ -330,8 +333,8 @@ impl MTConnectAgent {
 
         // 결과 수집
         for task in tasks {
-            if let Ok(Some((ip, content))) = task.await {
-                xml.push_str(&format!("    <!-- Data from {} -->\n", ip));
+            if let Ok(Some((device_name, content))) = task.await {
+                xml.push_str(&format!("    <!-- Data from {} -->\n", device_name));
                 // XML에서 <Streams>...</Streams> 내용 추출하여 추가
                 if let Some(streams_start) = content.find("<Streams>") {
                     if let Some(streams_end) = content.find("</Streams>") {
@@ -349,6 +352,109 @@ impl MTConnectAgent {
 
     pub fn get_sample_response(&self) -> String {
         self.get_current_response()
+    }
+
+    /// 모든 원격 Agent에서 current 데이터 가져오고 파싱된 DeviceInfo도 반환
+    pub async fn fetch_current_with_devices(&self) -> (String, Vec<DeviceInfo>) {
+        let mut xml = String::new();
+        xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        xml.push_str("<MTConnectStreams xmlns=\"urn:mtconnect.org:MTConnectStreams:1.8\">\n");
+        xml.push_str("  <Header creationTime=\"");
+        xml.push_str(&Utc::now().to_rfc3339());
+        xml.push_str("\" sender=\"");
+        xml.push_str(&self.sender);
+        xml.push_str("\" instanceId=\"");
+        xml.push_str(&self.instance_id);
+        xml.push_str("\" version=\"");
+        xml.push_str(&self.version);
+        xml.push_str("\" firstSequence=\"");
+        xml.push_str(&self.sequence.to_string());
+        xml.push_str("\" lastSequence=\"");
+        xml.push_str(&self.sequence.to_string());
+        xml.push_str("\" nextSequence=\"");
+        xml.push_str(&(self.sequence + 1).to_string());
+        xml.push_str("\"/>\n");
+        xml.push_str("  <Streams>\n");
+
+        let mut all_devices: Vec<DeviceInfo> = Vec::new();
+
+        // 모든 에이전트에서 병렬로 데이터 가져오기
+        let mut tasks = Vec::new();
+        for (base_url, device_name) in &self.remote_agents {
+            let client = Arc::clone(&self.client);
+            let base_url_clone = base_url.clone();
+            let device_name_clone = device_name.clone();
+            tasks.push(tokio::spawn(async move {
+                let url = format!("{}/current", base_url_clone);
+                match url.parse::<hyper::Uri>() {
+                    Ok(uri) => {
+                        let req = hyper::Request::builder()
+                            .uri(uri)
+                            .method(hyper::Method::GET)
+                            .body(Full::<Bytes>::default());
+
+                        match req {
+                            Ok(request) => {
+                                // 5초 타임아웃 적용
+                                match tokio::time::timeout(
+                                    Duration::from_secs(5),
+                                    client.request(request)
+                                ).await {
+                                    Ok(Ok(res)) => {
+                                        if res.status().is_success() {
+                                            let body = res.into_body();
+                                            match body.collect().await {
+                                                Ok(collected) => {
+                                                    let bytes: Bytes = collected.to_bytes();
+                                                    match String::from_utf8(bytes.to_vec()) {
+                                                        Ok(content) => Some((device_name_clone, content)),
+                                                        Err(_) => None,
+                                                    }
+                                                }
+                                                Err(_) => None,
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    _ => None, // 타임아웃 또는 에러
+                                }
+                            }
+                            Err(_) => None,
+                        }
+                    }
+                    Err(_) => None,
+                }
+            }));
+        }
+
+        // 결과 수집
+        for task in tasks {
+            if let Ok(Some((device_name, content))) = task.await {
+                // DeviceInfo 파싱
+                let devices = parse_device_info(&content, &device_name);
+                all_devices.extend(devices);
+
+                xml.push_str(&format!("    <!-- Data from {} -->\n", device_name));
+                // XML에서 <Streams>...</Streams> 내용 추출하여 추가
+                if let Some(streams_start) = content.find("<Streams>") {
+                    if let Some(streams_end) = content.find("</Streams>") {
+                        let streams_content = &content[streams_start + 9..streams_end];
+                        xml.push_str(streams_content);
+                    }
+                }
+            }
+        }
+
+        xml.push_str("  </Streams>\n");
+        xml.push_str("</MTConnectStreams>");
+
+        (xml, all_devices)
+    }
+
+    /// 원격 에이전트 목록 반환 (base_url, device_name)
+    pub fn get_remote_agents(&self) -> &[(String, String)] {
+        &self.remote_agents
     }
 }
 
@@ -391,4 +497,170 @@ impl MTConnectDevice {
 
         device
     }
+}
+
+// ============================================================================
+// Device Info for Database Storage
+// ============================================================================
+
+use elfin_postgres_data_access::{CncData, PathDataSet};
+
+/// 수집된 디바이스 정보 구조체
+#[derive(Debug, Clone)]
+pub struct DeviceInfo {
+    pub ip: String,
+    pub name: String,
+    pub uuid: String,
+    pub availability: String,
+    pub execution: String,
+    pub controller_mode: String,
+    pub emergency_stop: String,
+    pub program_name: String,
+    pub subprogram_name: String,
+    pub part_count: String,
+    pub spindle_load: String,
+    pub spindle_override: String,
+    pub feed_override: String,
+    pub rapid_override: String,
+    pub feedrate_actual: String,
+    pub x_axis_load: String,
+    pub z_axis_load: String,
+}
+
+impl Default for DeviceInfo {
+    fn default() -> Self {
+        DeviceInfo {
+            ip: String::new(),
+            name: "Unknown".to_string(),
+            uuid: "N/A".to_string(),
+            availability: "UNAVAILABLE".to_string(),
+            execution: "N/A".to_string(),
+            controller_mode: "N/A".to_string(),
+            emergency_stop: "N/A".to_string(),
+            program_name: "N/A".to_string(),
+            subprogram_name: "N/A".to_string(),
+            part_count: "0".to_string(),
+            spindle_load: "0".to_string(),
+            spindle_override: "100".to_string(),
+            feed_override: "100".to_string(),
+            rapid_override: "100".to_string(),
+            feedrate_actual: "0".to_string(),
+            x_axis_load: "0".to_string(),
+            z_axis_load: "0".to_string(),
+        }
+    }
+}
+
+impl DeviceInfo {
+    /// DeviceInfo를 CncData로 변환
+    pub fn to_cnc_data(&self, machine_id: &str, shop_id: i32) -> CncData {
+        let spindle_load = self.spindle_load.parse::<f64>().unwrap_or(0.0);
+        let spindle_override = self.spindle_override.parse::<i32>().ok();
+        let spindle_speed = self.feedrate_actual.parse::<i32>().unwrap_or(0);
+        let feed_override = self.feed_override.parse::<i32>().ok();
+        let part_count = self.part_count.parse::<i32>().unwrap_or(0);
+
+        CncData {
+            shop_id,
+            machine_id: machine_id.to_string(),
+            nc_id: Some(machine_id.to_string()),
+            timestamp: Some(Utc::now().timestamp_millis()),
+            part_count,
+            total_part_count: part_count,
+            mode: Some(self.controller_mode.clone()),
+            main_pgm_nm: if self.program_name != "N/A" { Some(self.program_name.clone()) } else { None },
+            status: Some(self.execution.clone()),
+            path_data: Some(vec![PathDataSet {
+                path: 1,
+                spindle_load,
+                spindle_override,
+                spindle_speed,
+                feed_override,
+                aux_codes: None,
+            }]),
+            alarms: None,
+        }
+    }
+}
+
+/// XML에서 속성 값 추출
+fn extract_attribute(text: &str, attr: &str) -> Option<String> {
+    let pattern = format!("{}=\"", attr);
+    let start = text.find(&pattern)?;
+    let start_pos = start + pattern.len();
+    let end = text[start_pos..].find("\"")?;
+    Some(text[start_pos..start_pos + end].to_string())
+}
+
+/// XML에서 특정 name 속성을 가진 태그의 값 추출
+fn extract_value_by_name(xml: &str, tag_name: &str, name_attr: &str) -> String {
+    let search_pattern = format!("name=\"{}\"", name_attr);
+
+    if let Some(name_pos) = xml.find(&search_pattern) {
+        if let Some(tag_start) = xml[..name_pos].rfind(&format!("<{} ", tag_name)) {
+            let closing_tag = format!("</{}>", tag_name);
+            if let Some(tag_end_pos) = xml[tag_start..].find(&closing_tag) {
+                let full_tag = &xml[tag_start..tag_start + tag_end_pos + closing_tag.len()];
+
+                if let Some(content_start) = full_tag.find('>') {
+                    if let Some(content_end) = full_tag.find(&closing_tag) {
+                        let content = &full_tag[content_start + 1..content_end];
+                        return content.trim().to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    "N/A".to_string()
+}
+
+/// XML에서 DeviceInfo 파싱
+pub fn parse_device_info(xml: &str, ip: &str) -> Vec<DeviceInfo> {
+    let mut devices = Vec::new();
+
+    let mut search_pos = 0;
+    while let Some(device_start) = xml[search_pos..].find("<DeviceStream") {
+        let abs_start = search_pos + device_start;
+        if let Some(device_end) = xml[abs_start..].find("</DeviceStream>") {
+            let device_xml = &xml[abs_start..abs_start + device_end + 15];
+
+            let mut device = DeviceInfo::default();
+            device.ip = ip.to_string();
+
+            // DeviceStream 태그에서 name, uuid 추출
+            if let Some(name_end) = device_xml.find(">") {
+                let header = &device_xml[..name_end];
+                if let Some(name) = extract_attribute(header, "name") {
+                    device.name = name;
+                }
+                if let Some(uuid) = extract_attribute(header, "uuid") {
+                    device.uuid = uuid;
+                }
+            }
+
+            // 데이터 항목 추출
+            device.availability = extract_value_by_name(device_xml, "Availability", "avail");
+            device.execution = extract_value_by_name(device_xml, "Execution", "execution");
+            device.controller_mode = extract_value_by_name(device_xml, "ControllerMode", "mode");
+            device.emergency_stop = extract_value_by_name(device_xml, "EmergencyStop", "estop");
+            device.program_name = extract_value_by_name(device_xml, "Program", "program");
+            device.subprogram_name = extract_value_by_name(device_xml, "Program", "subprogram");
+            device.part_count = extract_value_by_name(device_xml, "PartCount", "PartCountAct");
+            device.spindle_load = extract_value_by_name(device_xml, "Load", "Sload");
+            device.spindle_override = extract_value_by_name(device_xml, "RotaryVelocityOverride", "Sovr");
+            device.feed_override = extract_value_by_name(device_xml, "PathFeedrateOverride", "Fovr");
+            device.rapid_override = extract_value_by_name(device_xml, "PathFeedrateOverride", "Frapidovr");
+            device.feedrate_actual = extract_value_by_name(device_xml, "PathFeedrate", "Fact");
+            device.x_axis_load = extract_value_by_name(device_xml, "Load", "Xload");
+            device.z_axis_load = extract_value_by_name(device_xml, "Load", "Zload");
+
+            devices.push(device);
+            search_pos = abs_start + device_end + 15;
+        } else {
+            break;
+        }
+    }
+
+    devices
 }
