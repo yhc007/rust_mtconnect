@@ -558,7 +558,8 @@ impl DeviceInfo {
         let spindle_override = self.spindle_override.parse::<i32>().ok();
         let spindle_speed = self.feedrate_actual.parse::<i32>().unwrap_or(0);
         let feed_override = self.feed_override.parse::<i32>().ok();
-        let part_count = self.part_count.parse::<i32>().unwrap_or(0);
+        // UNAVAILABLE/누락 시 0이 아닌 None(NULL)으로 저장하여 "0개 가공"과 "미측정"을 구분
+        let part_count = self.part_count.parse::<i32>().ok();
 
         CncData {
             shop_id,
