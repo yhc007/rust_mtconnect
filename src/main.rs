@@ -5,15 +5,60 @@ use hyper_util::server::conn::auto;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 
 mod mtconnect;
 use mtconnect::MTConnectAgent;
 use elfin_postgres_data_access::DatabaseService;
 
+/// 데이터 수집 주기 (초)
+const COLLECTION_INTERVAL_SECS: u64 = 3;
+
 /// 장비 이름 반환 (device.ip에 이미 장비 이름이 저장됨)
 fn get_machine_name(device_name: &str) -> String {
     device_name.to_string()
+}
+
+/// 백그라운드 데이터 수집 태스크
+async fn background_data_collector(agent: MTConnectAgent, db: Arc<DatabaseService>) {
+    println!("Background data collector started (interval: {}s)", COLLECTION_INTERVAL_SECS);
+
+    loop {
+        // 데이터 수집
+        let (_, devices) = agent.fetch_current_with_devices().await;
+
+        // DB에 저장
+        let mut success_count = 0;
+        let mut error_count = 0;
+
+        for device in devices.iter() {
+            let machine_id = get_machine_name(&device.ip);
+            let cnc_data = device.to_cnc_data(&machine_id, 1);
+
+            // 실시간 상태 업데이트
+            if let Err(e) = db.update_machine_status(&cnc_data).await {
+                eprintln!("[Collector] Failed to update status for {}: {:?}", machine_id, e);
+                error_count += 1;
+            } else {
+                success_count += 1;
+            }
+
+            // 이력 저장
+            if let Err(e) = db.save_machine_data_history(&cnc_data).await {
+                eprintln!("[Collector] Failed to save history for {}: {:?}", machine_id, e);
+            }
+        }
+
+        if error_count == 0 && success_count > 0 {
+            println!("[Collector] Collected data from {} devices", success_count);
+        } else if error_count > 0 {
+            println!("[Collector] Collected: {} success, {} errors", success_count, error_count);
+        }
+
+        // 다음 수집까지 대기
+        tokio::time::sleep(Duration::from_secs(COLLECTION_INTERVAL_SECS)).await;
+    }
 }
 
 async fn handle_request(
@@ -45,7 +90,7 @@ async fn handle_request(
         (&Method::GET, "/current") => {
             let (xml, devices) = agent.fetch_current_with_devices().await;
 
-            // DB에 데이터 저장
+            // DB에 데이터 저장 (HTTP 요청 시에도 저장)
             if let Some(db) = &db {
                 for device in devices.iter() {
                     let machine_id = get_machine_name(&device.ip);
@@ -127,12 +172,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("  - MNT600S-1 (http://192.168.10.5:5006)");
     println!("  - MNT600-2 (http://192.168.10.5:5007)");
     println!("  - MNT600S-2 (http://192.168.10.5:5008)");
+
     if db.is_some() {
         println!("Database storage: ENABLED");
+        println!("Data collection interval: {}s", COLLECTION_INTERVAL_SECS);
     } else {
         println!("Database storage: DISABLED");
     }
 
+    // 백그라운드 데이터 수집 태스크 시작 (DB가 연결된 경우에만)
+    if let Some(db_ref) = db.clone() {
+        let collector_agent = agent.clone();
+        tokio::spawn(async move {
+            background_data_collector(collector_agent, db_ref).await;
+        });
+    }
+
+    // HTTP 서버 실행
     loop {
         let (stream, _) = listener.accept().await?;
         let io = TokioIo::new(stream);
