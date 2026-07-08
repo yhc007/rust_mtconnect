@@ -19,3 +19,7 @@ package-lock.json
 
 # Logs
 *.log
+
+# Environment (may contain DB credentials)
+.env
+**/.env
