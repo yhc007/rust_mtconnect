@@ -519,6 +519,7 @@ pub struct DeviceInfo {
     pub subprogram_name: String,
     pub part_count: String,
     pub spindle_load: String,
+    pub spindle_rpm: String,
     pub spindle_override: String,
     pub feed_override: String,
     pub rapid_override: String,
@@ -541,6 +542,7 @@ impl Default for DeviceInfo {
             subprogram_name: "N/A".to_string(),
             part_count: "0".to_string(),
             spindle_load: "0".to_string(),
+            spindle_rpm: "0".to_string(),
             spindle_override: "100".to_string(),
             feed_override: "100".to_string(),
             rapid_override: "100".to_string(),
@@ -556,10 +558,25 @@ impl DeviceInfo {
     pub fn to_cnc_data(&self, machine_id: &str, shop_id: i32) -> CncData {
         let spindle_load = self.spindle_load.parse::<f64>().unwrap_or(0.0);
         let spindle_override = self.spindle_override.parse::<i32>().ok();
-        let spindle_speed = self.feedrate_actual.parse::<i32>().unwrap_or(0);
+        // 주축 회전수는 RotaryVelocity(Srpm)에서 수집한다.
+        // 에이전트가 소수(예: "1500.0")나 UNAVAILABLE을 보낼 수 있으므로 f64로 파싱 후 변환
+        let spindle_speed = self.spindle_rpm.parse::<f64>().map(|v| v as i32).unwrap_or(0);
         let feed_override = self.feed_override.parse::<i32>().ok();
         // UNAVAILABLE/누락 시 0이 아닌 None(NULL)으로 저장하여 "0개 가공"과 "미측정"을 구분
         let part_count = self.part_count.parse::<i32>().ok();
+
+        // 실제 가동 중인 프로그램명.
+        // 메인 프로그램(Program name="program")은 QT-MAIN/HCN-MAIN 같은 고정 이름이라
+        // 가공 중인 프로그램 추적에 쓸 수 없다. 실시간으로 갱신되는 서브프로그램
+        // (Program name="subprogram", subType="x:SUB")을 우선 사용하고,
+        // 값이 없을 때만 메인 프로그램으로 폴백한다.
+        let running_pgm = if is_usable(&self.subprogram_name) {
+            Some(self.subprogram_name.clone())
+        } else if self.program_name != "N/A" {
+            Some(self.program_name.clone())
+        } else {
+            None
+        };
 
         CncData {
             shop_id,
@@ -569,7 +586,7 @@ impl DeviceInfo {
             part_count,
             total_part_count: part_count,
             mode: Some(self.controller_mode.clone()),
-            main_pgm_nm: if self.program_name != "N/A" { Some(self.program_name.clone()) } else { None },
+            main_pgm_nm: running_pgm,
             status: Some(self.execution.clone()),
             path_data: Some(vec![PathDataSet {
                 path: 1,
@@ -597,23 +614,36 @@ fn extract_attribute(text: &str, attr: &str) -> Option<String> {
 fn extract_value_by_name(xml: &str, tag_name: &str, name_attr: &str) -> String {
     let search_pattern = format!("name=\"{}\"", name_attr);
 
-    if let Some(name_pos) = xml.find(&search_pattern) {
-        if let Some(tag_start) = xml[..name_pos].rfind(&format!("<{} ", tag_name)) {
-            let closing_tag = format!("</{}>", tag_name);
-            if let Some(tag_end_pos) = xml[tag_start..].find(&closing_tag) {
-                let full_tag = &xml[tag_start..tag_start + tag_end_pos + closing_tag.len()];
+    let Some(name_pos) = xml.find(&search_pattern) else {
+        return "N/A".to_string();
+    };
+    let Some(tag_start) = xml[..name_pos].rfind(&format!("<{} ", tag_name)) else {
+        return "N/A".to_string();
+    };
 
-                if let Some(content_start) = full_tag.find('>') {
-                    if let Some(content_end) = full_tag.find(&closing_tag) {
-                        let content = &full_tag[content_start + 1..content_end];
-                        return content.trim().to_string();
-                    }
-                }
-            }
-        }
+    // 여는 태그의 끝('>')을 먼저 찾는다
+    let Some(open_end_rel) = xml[tag_start..].find('>') else {
+        return "N/A".to_string();
+    };
+    let open_end = tag_start + open_end_rel;
+
+    // self-closing 태그(<Program ... />)는 값이 비어 있다는 뜻이다.
+    // 이를 걸러내지 않으면 닫는 태그를 찾지 못해 다음 엘리먼트까지 XML 마크업이 통째로 반환된다.
+    if xml[tag_start..open_end].ends_with('/') {
+        return "N/A".to_string();
     }
 
-    "N/A".to_string()
+    let closing_tag = format!("</{}>", tag_name);
+    let Some(close_rel) = xml[open_end + 1..].find(&closing_tag) else {
+        return "N/A".to_string();
+    };
+
+    xml[open_end + 1..open_end + 1 + close_rel].trim().to_string()
+}
+
+/// 수집값이 실제 의미 있는 값인지 판정 (미수집/미가용과 구분)
+fn is_usable(value: &str) -> bool {
+    !value.is_empty() && value != "N/A" && value != "UNAVAILABLE"
 }
 
 /// XML에서 DeviceInfo 파싱
@@ -649,6 +679,7 @@ pub fn parse_device_info(xml: &str, ip: &str) -> Vec<DeviceInfo> {
             device.subprogram_name = extract_value_by_name(device_xml, "Program", "subprogram");
             device.part_count = extract_value_by_name(device_xml, "PartCount", "PartCountAct");
             device.spindle_load = extract_value_by_name(device_xml, "Load", "Sload");
+            device.spindle_rpm = extract_value_by_name(device_xml, "RotaryVelocity", "Srpm");
             device.spindle_override = extract_value_by_name(device_xml, "RotaryVelocityOverride", "Sovr");
             device.feed_override = extract_value_by_name(device_xml, "PathFeedrateOverride", "Fovr");
             device.rapid_override = extract_value_by_name(device_xml, "PathFeedrateOverride", "Frapidovr");
