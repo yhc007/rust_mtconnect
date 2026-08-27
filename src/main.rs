@@ -169,8 +169,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("  - QT350-3 (http://192.168.10.5:5003)");
     println!("  - QT350-4 (http://192.168.10.5:5004)");
     println!("  - MNT600-1 (http://192.168.10.5:5005)");
-    println!("  - MNT600S-1 (http://192.168.10.5:5006)");
-    println!("  - MNT600-2 (http://192.168.10.5:5007)");
+    println!("  - MNT600-2 (http://192.168.10.5:5006)");
+    println!("  - MNT600S-1 (http://192.168.10.5:5007)");
     println!("  - MNT600S-2 (http://192.168.10.5:5008)");
 
     if db.is_some() {

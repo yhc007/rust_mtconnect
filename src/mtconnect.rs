@@ -48,10 +48,12 @@ impl MTConnectAgent {
             ("http://192.168.10.5:5002".to_string(), "QT350-2".to_string()),
             ("http://192.168.10.5:5003".to_string(), "QT350-3".to_string()),
             ("http://192.168.10.5:5004".to_string(), "QT350-4".to_string()),
-            ("http://192.168.10.5:5005".to_string(), "MNT600-1".to_string()),
-            ("http://192.168.10.5:5006".to_string(), "MNT600S-1".to_string()),
-            ("http://192.168.10.5:5007".to_string(), "MNT600-2".to_string()),
-            ("http://192.168.10.5:5008".to_string(), "MNT600S-2".to_string()),
+            // 장비명은 에이전트가 보고하는 uuid의 모델명과 일치시킨다.
+            // 5006(MT600_SN306319)과 5007(MT600S_SN306321)이 서로 뒤바뀌어 있었다.
+            ("http://192.168.10.5:5005".to_string(), "MNT600-1".to_string()),   // MT600_SN306318
+            ("http://192.168.10.5:5006".to_string(), "MNT600-2".to_string()),   // MT600_SN306319
+            ("http://192.168.10.5:5007".to_string(), "MNT600S-1".to_string()),  // MT600S_SN306321
+            ("http://192.168.10.5:5008".to_string(), "MNT600S-2".to_string()),  // MT600S_SN306322
         ];
 
         let client = Arc::new(
@@ -584,7 +586,10 @@ impl DeviceInfo {
             nc_id: Some(machine_id.to_string()),
             timestamp: Some(Utc::now().timestamp_millis()),
             part_count,
-            total_part_count: part_count,
+            // 이 에이전트들은 누적 파트카운트를 제공하지 않는다.
+            // /probe 상 PART_COUNT 타입 DataItem은 pc(PartCountAct) 하나뿐이므로
+            // part_count를 복사하지 않고 NULL로 남겨 "누적값 없음"을 명시한다.
+            total_part_count: None,
             mode: Some(self.controller_mode.clone()),
             main_pgm_nm: running_pgm,
             status: Some(self.execution.clone()),

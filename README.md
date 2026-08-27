@@ -23,8 +23,8 @@ A lightweight MTConnect aggregation server implementation using Rust and Hyper. 
 | QT350-3 | http://192.168.10.5:5003 | CNC Lathe |
 | QT350-4 | http://192.168.10.5:5004 | CNC Lathe |
 | MNT600-1 | http://192.168.10.5:5005 | Multi-Tasking Machine |
-| MNT600S-1 | http://192.168.10.5:5006 | Multi-Tasking Machine |
-| MNT600-2 | http://192.168.10.5:5007 | Multi-Tasking Machine |
+| MNT600-2 | http://192.168.10.5:5006 | Multi-Tasking Machine |
+| MNT600S-1 | http://192.168.10.5:5007 | Multi-Tasking Machine |
 | MNT600S-2 | http://192.168.10.5:5008 | Multi-Tasking Machine |
 
 ## Quick Start
