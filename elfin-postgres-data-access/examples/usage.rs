@@ -52,6 +52,8 @@ async fn main() -> anyhow::Result<()> {
                 alarm_code: Some("2001".to_string()),
                 alarm_message: Some("알람 메시지".to_string()),
             }]),
+            // FOCAS 수집기는 보조 신호를 쓰지 않으므로 None
+            aux_signals: None,
         };
 
         // 실시간 상태 업데이트

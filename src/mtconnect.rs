@@ -505,7 +505,7 @@ impl MTConnectDevice {
 // Device Info for Database Storage
 // ============================================================================
 
-use elfin_postgres_data_access::{CncData, PathDataSet};
+use elfin_postgres_data_access::{AuxSignals, CncData, PathDataSet};
 
 /// 수집된 디바이스 정보 구조체
 #[derive(Debug, Clone)]
@@ -528,6 +528,11 @@ pub struct DeviceInfo {
     pub feedrate_actual: String,
     pub x_axis_load: String,
     pub z_axis_load: String,
+    pub pallet_num: String,
+    pub line_num: String,
+    pub auto_time: String,
+    pub cut_time: String,
+    pub total_time: String,
 }
 
 impl Default for DeviceInfo {
@@ -551,6 +556,11 @@ impl Default for DeviceInfo {
             feedrate_actual: "0".to_string(),
             x_axis_load: "0".to_string(),
             z_axis_load: "0".to_string(),
+            pallet_num: "N/A".to_string(),
+            line_num: "N/A".to_string(),
+            auto_time: "N/A".to_string(),
+            cut_time: "N/A".to_string(),
+            total_time: "N/A".to_string(),
         }
     }
 }
@@ -580,6 +590,21 @@ impl DeviceInfo {
             None
         };
 
+        // 값이 없는 신호는 None으로 남겨 "미수집"과 "0"을 구분한다
+        // ACCUMULATED_TIME은 SAMPLE이라 소수로 올 수 있어 f64로 받고 초 단위로 절삭한다
+        let secs = |v: &str| {
+            if is_usable(v) { v.parse::<f64>().ok().map(|n| n as i64) } else { None }
+        };
+        let text = |v: &str| if is_usable(v) { Some(v.to_string()) } else { None };
+        let aux_signals = AuxSignals {
+            total_time: secs(&self.total_time),
+            auto_time: secs(&self.auto_time),
+            cut_time: secs(&self.cut_time),
+            pallet_num: text(&self.pallet_num),
+            line_num: text(&self.line_num),
+            subprogram: text(&self.subprogram_name),
+        };
+
         CncData {
             shop_id,
             machine_id: machine_id.to_string(),
@@ -602,6 +627,7 @@ impl DeviceInfo {
                 aux_codes: None,
             }]),
             alarms: None,
+            aux_signals: Some(aux_signals),
         }
     }
 }
@@ -691,6 +717,13 @@ pub fn parse_device_info(xml: &str, ip: &str) -> Vec<DeviceInfo> {
             device.feedrate_actual = extract_value_by_name(device_xml, "PathFeedrate", "Fact");
             device.x_axis_load = extract_value_by_name(device_xml, "Load", "Xload");
             device.z_axis_load = extract_value_by_name(device_xml, "Load", "Zload");
+            // 파트카운트가 죽어 있어도 살아 있는 누적 카운터와 사이클 지표.
+            // 전용 컬럼이 없어 raw_data(jsonb)에만 저장한다.
+            device.pallet_num = extract_value_by_name(device_xml, "PalletId", "pallet_num");
+            device.line_num = extract_value_by_name(device_xml, "Line", "line");
+            device.auto_time = extract_value_by_name(device_xml, "AccumulatedTime", "auto_time");
+            device.cut_time = extract_value_by_name(device_xml, "AccumulatedTime", "cut_time");
+            device.total_time = extract_value_by_name(device_xml, "AccumulatedTime", "total_time");
 
             devices.push(device);
             search_pos = abs_start + device_end + 15;

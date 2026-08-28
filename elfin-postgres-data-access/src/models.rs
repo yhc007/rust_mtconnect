@@ -21,6 +21,37 @@ pub struct CncData {
     #[serde(rename = "pathData")]
     pub path_data: Option<Vec<PathDataSet>>,
     pub alarms: Option<Vec<Alarm>>,
+    /// 전용 컬럼이 없는 보조 신호. machine_data_history.raw_data(jsonb)에만 실린다.
+    /// None이면 직렬화에서 빠지므로 기존 수집기가 만드는 JSON은 그대로 유지된다.
+    #[serde(rename = "auxSignals", skip_serializing_if = "Option::is_none", default)]
+    pub aux_signals: Option<AuxSignals>,
+}
+
+/// 전용 컬럼 없이 raw_data에 보관하는 보조 신호.
+///
+/// MTConnect 에이전트는 파트카운트가 죽어 있어도 누적 시간 카운터와
+/// 가공 사이클 지표는 정상적으로 내보낸다. 스키마를 바꾸지 않고
+/// 이후 분석에 쓰기 위해 여기에 모아 둔다.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuxSignals {
+    /// 누적 총 시간(초)
+    #[serde(rename = "totalTime", skip_serializing_if = "Option::is_none", default)]
+    pub total_time: Option<i64>,
+    /// 누적 자동운전 시간(초)
+    #[serde(rename = "autoTime", skip_serializing_if = "Option::is_none", default)]
+    pub auto_time: Option<i64>,
+    /// 누적 절삭 시간(초)
+    #[serde(rename = "cutTime", skip_serializing_if = "Option::is_none", default)]
+    pub cut_time: Option<i64>,
+    /// 팔레트 번호 (팔레트 교환식 장비의 파트 교체 지표)
+    #[serde(rename = "palletNum", skip_serializing_if = "Option::is_none", default)]
+    pub pallet_num: Option<String>,
+    /// 실행 중인 블록 번호
+    #[serde(rename = "lineNum", skip_serializing_if = "Option::is_none", default)]
+    pub line_num: Option<String>,
+    /// 서브프로그램명 (가공 중에만 값이 존재)
+    #[serde(rename = "subprogram", skip_serializing_if = "Option::is_none", default)]
+    pub subprogram: Option<String>,
 }
 
 /// 경로 데이터 구조체
