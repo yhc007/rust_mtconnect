@@ -520,6 +520,7 @@ pub struct DeviceInfo {
     pub program_name: String,
     pub subprogram_name: String,
     pub part_count: String,
+    pub part_count_all: String,
     pub spindle_load: String,
     pub spindle_rpm: String,
     pub spindle_override: String,
@@ -548,6 +549,7 @@ impl Default for DeviceInfo {
             program_name: "N/A".to_string(),
             subprogram_name: "N/A".to_string(),
             part_count: "0".to_string(),
+            part_count_all: "N/A".to_string(),
             spindle_load: "0".to_string(),
             spindle_rpm: "0".to_string(),
             spindle_override: "100".to_string(),
@@ -576,6 +578,11 @@ impl DeviceInfo {
         let feed_override = self.feed_override.parse::<i32>().ok();
         // UNAVAILABLE/누락 시 0이 아닌 None(NULL)으로 저장하여 "0개 가공"과 "미측정"을 구분
         let part_count = self.part_count.parse::<i32>().ok();
+        let total_part_count = if is_usable(&self.part_count_all) {
+            self.part_count_all.parse::<i32>().ok()
+        } else {
+            None
+        };
 
         // 실제 가동 중인 프로그램명.
         // 메인 프로그램(Program name="program")은 QT-MAIN/HCN-MAIN 같은 고정 이름이라
@@ -611,10 +618,10 @@ impl DeviceInfo {
             nc_id: Some(machine_id.to_string()),
             timestamp: Some(Utc::now().timestamp_millis()),
             part_count,
-            // 이 에이전트들은 누적 파트카운트를 제공하지 않는다.
-            // /probe 상 PART_COUNT 타입 DataItem은 pc(PartCountAct) 하나뿐이므로
-            // part_count를 복사하지 않고 NULL로 남겨 "누적값 없음"을 명시한다.
-            total_part_count: None,
+            // 누적 파트카운트는 PartCountAll(subType="ALL")에서만 받는다.
+            // 항목이 없으면 None이 되어 NULL로 저장된다 — part_count를 복사하면
+            // 누적값이 있는 것처럼 보이므로 절대 대체하지 않는다.
+            total_part_count,
             mode: Some(self.controller_mode.clone()),
             main_pgm_nm: running_pgm,
             status: Some(self.execution.clone()),
@@ -709,6 +716,9 @@ pub fn parse_device_info(xml: &str, ip: &str) -> Vec<DeviceInfo> {
             device.program_name = extract_value_by_name(device_xml, "Program", "program");
             device.subprogram_name = extract_value_by_name(device_xml, "Program", "subprogram");
             device.part_count = extract_value_by_name(device_xml, "PartCount", "PartCountAct");
+            // 누적 파트카운트(subType="ALL"). 현재 에이전트에는 선언되어 있지 않아
+            // 항상 "N/A"이며, 설비측에서 PartCountAll 항목을 추가하면 자동으로 채워진다.
+            device.part_count_all = extract_value_by_name(device_xml, "PartCount", "PartCountAll");
             device.spindle_load = extract_value_by_name(device_xml, "Load", "Sload");
             device.spindle_rpm = extract_value_by_name(device_xml, "RotaryVelocity", "Srpm");
             device.spindle_override = extract_value_by_name(device_xml, "RotaryVelocityOverride", "Sovr");
