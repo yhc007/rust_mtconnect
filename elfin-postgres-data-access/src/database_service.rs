@@ -1,16 +1,20 @@
 use crate::error::{DatabaseError, Result};
 use crate::models::{CncData, CncMachine, MacroData};
 use std::sync::Arc;
-use tokio_postgres::{Client, NoTls};
+use tokio::sync::RwLock;
+use tokio_postgres::types::ToSql;
+use tokio_postgres::{Client, NoTls, Row};
 
 /// PostgreSQL 데이터베이스 서비스
 pub struct DatabaseService {
-    client: Arc<Client>,
+    client: RwLock<Arc<Client>>,
+    /// 재연결에 쓰기 위해 보관한다
+    connection_string: String,
 }
 
 impl DatabaseService {
-    /// 연결 문자열로 생성
-    pub async fn new(connection_string: &str) -> Result<Self> {
+    /// 커넥션을 맺고 구동용 태스크를 띄운다
+    async fn connect(connection_string: &str) -> Result<Arc<Client>> {
         let (client, connection) = tokio_postgres::connect(connection_string, NoTls)
             .await
             .map_err(DatabaseError::Connection)?;
@@ -22,9 +26,102 @@ impl DatabaseService {
             }
         });
 
+        Ok(Arc::new(client))
+    }
+
+    /// 연결 문자열로 생성
+    pub async fn new(connection_string: &str) -> Result<Self> {
+        let client = Self::connect(connection_string).await?;
+
         Ok(Self {
-            client: Arc::new(client),
+            client: RwLock::new(client),
+            connection_string: connection_string.to_string(),
         })
+    }
+
+    /// 끊긴 커넥션을 새로 맺는다.
+    ///
+    /// 서버가 커넥션을 닫으면(디스크 풀로 인한 PANIC 등) tokio-postgres는 스스로
+    /// 복구하지 않는다. 재연결하지 않으면 프로세스를 재시작할 때까지 모든 쿼리가
+    /// 영구히 Closed로 실패한다.
+    async fn reconnect(&self) -> Result<Arc<Client>> {
+        let mut guard = self.client.write().await;
+
+        // 쓰기 락을 기다리는 사이 다른 호출이 이미 살려 놨으면 그것을 쓴다
+        if !guard.is_closed() {
+            return Ok(guard.clone());
+        }
+
+        let client = Self::connect(&self.connection_string).await?;
+        tracing::warn!("Database connection was closed; reconnected");
+        *guard = client.clone();
+        Ok(client)
+    }
+
+    /// 살아 있는 커넥션을 돌려준다. 이미 끊겨 있으면 먼저 다시 맺는다.
+    async fn live_client(&self) -> Result<Arc<Client>> {
+        let client = { self.client.read().await.clone() };
+        if client.is_closed() {
+            return self.reconnect().await;
+        }
+        Ok(client)
+    }
+
+    /// execute. 수행 도중 커넥션이 끊기면 한 번만 다시 맺고 재시도한다.
+    ///
+    /// 커넥션이 살아 있는 상태에서 난 오류는 SQL/제약 조건 문제이므로
+    /// 재시도하지 않고 그대로 올린다.
+    async fn execute_retry(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<u64> {
+        let client = self.live_client().await?;
+        match client.execute(sql, params).await {
+            Ok(n) => Ok(n),
+            Err(e) => {
+                if !client.is_closed() {
+                    return Err(DatabaseError::Connection(e));
+                }
+                let client = self.reconnect().await?;
+                client
+                    .execute(sql, params)
+                    .await
+                    .map_err(DatabaseError::Connection)
+            }
+        }
+    }
+
+    /// query. 재시도 규칙은 execute_retry와 같다.
+    async fn query_retry(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Vec<Row>> {
+        let client = self.live_client().await?;
+        match client.query(sql, params).await {
+            Ok(rows) => Ok(rows),
+            Err(e) => {
+                if !client.is_closed() {
+                    return Err(DatabaseError::Connection(e));
+                }
+                let client = self.reconnect().await?;
+                client
+                    .query(sql, params)
+                    .await
+                    .map_err(DatabaseError::Connection)
+            }
+        }
+    }
+
+    /// query_one. 재시도 규칙은 execute_retry와 같다.
+    async fn query_one_retry(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Row> {
+        let client = self.live_client().await?;
+        match client.query_one(sql, params).await {
+            Ok(row) => Ok(row),
+            Err(e) => {
+                if !client.is_closed() {
+                    return Err(DatabaseError::Connection(e));
+                }
+                let client = self.reconnect().await?;
+                client
+                    .query_one(sql, params)
+                    .await
+                    .map_err(DatabaseError::Connection)
+            }
+        }
     }
 
     /// 환경 변수에서 설정 읽기
@@ -48,8 +145,7 @@ impl DatabaseService {
     /// 활성화된 모든 CNC 설비 정보 조회
     pub async fn get_active_machines(&self) -> Result<Vec<CncMachine>> {
         let rows = self
-            .client
-            .query(
+            .query_retry(
                 "SELECT id, nc_id, machine_name, nc_host, nc_port, shop_id, \
                  is_active, created_at, updated_at \
                  FROM cnc_machines \
@@ -57,8 +153,7 @@ impl DatabaseService {
                  ORDER BY machine_name",
                 &[],
             )
-            .await
-            .map_err(DatabaseError::Connection)?;
+            .await?;
 
         let mut machines = Vec::new();
         for row in rows {
@@ -111,8 +206,8 @@ impl DatabaseService {
             .transpose()
             .map_err(DatabaseError::Serialization)?;
 
-        self.client
-            .execute(
+        self
+            .execute_retry(
                 "INSERT INTO machine_status (
                     machine_id, nc_id, shop_id, timestamp, part_count, total_part_count,
                     status, mode, main_pgm_nm, spindle_load, spindle_override,
@@ -156,8 +251,7 @@ impl DatabaseService {
                     &path_data_json,
                 ],
             )
-            .await
-            .map_err(DatabaseError::Connection)?;
+            .await?;
 
         Ok(())
     }
@@ -189,8 +283,8 @@ impl DatabaseService {
         let raw_data_json = serde_json::to_value(data)
             .map_err(DatabaseError::Serialization)?;
 
-        self.client
-            .execute(
+        self
+            .execute_retry(
                 "INSERT INTO machine_data_history (
                     machine_id, nc_id, shop_id, timestamp, part_count, total_part_count,
                     status, mode, main_pgm_nm, spindle_load, spindle_override,
@@ -217,8 +311,7 @@ impl DatabaseService {
                     &raw_data_json,
                 ],
             )
-            .await
-            .map_err(DatabaseError::Connection)?;
+            .await?;
 
         Ok(())
     }
@@ -228,8 +321,8 @@ impl DatabaseService {
         let macros_json = serde_json::to_value(&macro_data.macros)
             .map_err(DatabaseError::Serialization)?;
 
-        self.client
-            .execute(
+        self
+            .execute_retry(
                 "INSERT INTO machine_macro_history (
                     machine_id, shop_id, timestamp, macros, created_at
                 )
@@ -241,18 +334,14 @@ impl DatabaseService {
                     &macros_json,
                 ],
             )
-            .await
-            .map_err(DatabaseError::Connection)?;
+            .await?;
 
         Ok(())
     }
 
     /// 데이터베이스 연결 테스트
     pub async fn test_connection(&self) -> Result<()> {
-        self.client
-            .query_one("SELECT 1", &[])
-            .await
-            .map_err(DatabaseError::Connection)?;
+        self.query_one_retry("SELECT 1", &[]).await?;
 
         tracing::info!("Database connection successful!");
         Ok(())
