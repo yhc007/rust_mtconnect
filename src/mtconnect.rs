@@ -680,7 +680,62 @@ fn extract_value_by_name(xml: &str, tag_name: &str, name_attr: &str) -> String {
         return "N/A".to_string();
     };
 
-    xml[open_end + 1..open_end + 1 + close_rel].trim().to_string()
+    // 엔티티를 먼저 복원한 뒤 trim 한다. 제어문자만 담긴 값은 빈 값이 되어
+    // is_usable 이 걸러낸다.
+    decode_xml_entities(&xml[open_end + 1..open_end + 1 + close_rel])
+        .trim()
+        .to_string()
+}
+
+/// XML 문자 참조와 기본 엔티티를 복원한다.
+///
+/// 에이전트는 제어문자를 수치 참조로 내보낸다. 서브프로그램이 비면 "&#13;"
+/// (캐리지 리턴)을 보내는데, 복원하지 않으면 그 5글자가 값처럼 저장되어
+/// main_pgm_nm 에 "&#13;" 이 들어간다.
+fn decode_xml_entities(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
+    }
+
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+
+    while i < s.len() {
+        if bytes[i] == b'&' {
+            // 엔티티 이름은 짧다. 멀리 있는 ';' 까지 삼키지 않도록 범위를 제한한다.
+            let window = s.len().min(i + 12);
+            if let Some(semi) = s[i..window].find(';') {
+                let name = &s[i + 1..i + semi];
+                let decoded = match name {
+                    "amp" => Some('&'),
+                    "lt" => Some('<'),
+                    "gt" => Some('>'),
+                    "quot" => Some('"'),
+                    "apos" => Some('\''),
+                    _ => match name.strip_prefix("#x").or_else(|| name.strip_prefix("#X")) {
+                        Some(hex) => u32::from_str_radix(hex, 16).ok().and_then(char::from_u32),
+                        None => name
+                            .strip_prefix('#')
+                            .and_then(|dec| dec.parse::<u32>().ok())
+                            .and_then(char::from_u32),
+                    },
+                };
+                if let Some(c) = decoded {
+                    out.push(c);
+                    i += semi + 1;
+                    continue;
+                }
+            }
+        }
+
+        // 엔티티가 아니면 그대로 넘긴다
+        let ch = s[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+
+    out
 }
 
 /// 수집값이 실제 의미 있는 값인지 판정 (미수집/미가용과 구분)
