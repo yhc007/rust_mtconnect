@@ -54,6 +54,10 @@ impl MTConnectAgent {
             ("http://192.168.10.5:5006".to_string(), "MNT600-2".to_string()),   // MT600_SN306319
             ("http://192.168.10.5:5007".to_string(), "MNT600S-1".to_string()),  // MT600S_SN306321
             ("http://192.168.10.5:5008".to_string(), "MNT600S-2".to_string()),  // MT600S_SN306322
+            // 파라미터 시트는 M9 를 INT-i300 으로 표기하지만 에이전트 uuid 는 VCN535C 다.
+            // 5006/5007 과 같이 uuid 를 기준으로 삼는다. 2025-10-19 이후 전 항목
+            // UNAVAILABLE 로, 기계가 연결되면 그때부터 값이 들어온다.
+            ("http://192.168.10.5:5009".to_string(), "VCN535C".to_string()),    // VCN535C_SN306320
         ];
 
         let client = Arc::new(

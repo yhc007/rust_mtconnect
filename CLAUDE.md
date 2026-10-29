@@ -45,6 +45,7 @@ The server aggregates data from 9 remote MTConnect agents on 192.168.10.5 with d
 | MNT600-2 | http://192.168.10.5:5006 | 5006 |
 | MNT600S-1 | http://192.168.10.5:5007 | 5007 |
 | MNT600S-2 | http://192.168.10.5:5008 | 5008 |
+| VCN535C | http://192.168.10.5:5009 | 5009 |
 
 These are defined in `MTConnectAgent::new()` in src/mtconnect.rs.
 

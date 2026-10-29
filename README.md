@@ -26,6 +26,7 @@ A lightweight MTConnect aggregation server implementation using Rust and Hyper. 
 | MNT600-2 | http://192.168.10.5:5006 | Multi-Tasking Machine |
 | MNT600S-1 | http://192.168.10.5:5007 | Multi-Tasking Machine |
 | MNT600S-2 | http://192.168.10.5:5008 | Multi-Tasking Machine |
+| VCN535C | http://192.168.10.5:5009 | Vertical Machining Center |
 
 ## Quick Start
 

@@ -172,6 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("  - MNT600-2 (http://192.168.10.5:5006)");
     println!("  - MNT600S-1 (http://192.168.10.5:5007)");
     println!("  - MNT600S-2 (http://192.168.10.5:5008)");
+    println!("  - VCN535C (http://192.168.10.5:5009)");
 
     if db.is_some() {
         println!("Database storage: ENABLED");
