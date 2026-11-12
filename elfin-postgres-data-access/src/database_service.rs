@@ -1,23 +1,39 @@
 use crate::error::{DatabaseError, Result};
 use crate::models::{CncData, CncMachine, MacroData};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::time::Duration;
+use tokio::sync::{Mutex, RwLock};
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, NoTls, Row};
 
 /// PostgreSQL 데이터베이스 서비스
+/// 연결 시도 제한 시간. tokio_postgres::connect 자체에는 타임아웃이 없어
+/// 서버가 소켓만 받고 핸드셰이크를 끝내지 않으면 영구히 멈춘다.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub struct DatabaseService {
     client: RwLock<Arc<Client>>,
     /// 재연결에 쓰기 위해 보관한다
     connection_string: String,
+    /// 재연결 시도를 직렬화한다. try_lock 으로만 잡아 대기를 만들지 않는다.
+    reconnect_lock: Mutex<()>,
 }
 
 impl DatabaseService {
-    /// 커넥션을 맺고 구동용 태스크를 띄운다
+    /// 커넥션을 맺고 구동용 태스크를 띄운다.
+    ///
+    /// tokio_postgres::connect 는 자체 타임아웃이 없다. 서버가 소켓만 받고
+    /// 핸드셰이크를 끝내지 않으면 영구히 멈추므로 반드시 감싼다.
     async fn connect(connection_string: &str) -> Result<Arc<Client>> {
-        let (client, connection) = tokio_postgres::connect(connection_string, NoTls)
-            .await
-            .map_err(DatabaseError::Connection)?;
+        let (client, connection) = match tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            tokio_postgres::connect(connection_string, NoTls),
+        )
+        .await
+        {
+            Ok(result) => result.map_err(DatabaseError::Connection)?,
+            Err(_) => return Err(DatabaseError::ConnectTimeout(CONNECT_TIMEOUT)),
+        };
 
         // 연결을 백그라운드에서 실행
         tokio::spawn(async move {
@@ -36,6 +52,7 @@ impl DatabaseService {
         Ok(Self {
             client: RwLock::new(client),
             connection_string: connection_string.to_string(),
+            reconnect_lock: Mutex::new(()),
         })
     }
 
@@ -45,16 +62,31 @@ impl DatabaseService {
     /// 복구하지 않는다. 재연결하지 않으면 프로세스를 재시작할 때까지 모든 쿼리가
     /// 영구히 Closed로 실패한다.
     async fn reconnect(&self) -> Result<Arc<Client>> {
-        let mut guard = self.client.write().await;
+        // 재연결은 한 번에 하나만 시도한다. 단 기다리지는 않는다 —
+        // 10대가 같은 주기에 실패하면 9개는 즉시 에러로 돌아가고 3초 뒤 다시 온다.
+        let _attempt = match self.reconnect_lock.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => return Err(DatabaseError::ReconnectBusy),
+        };
 
-        // 쓰기 락을 기다리는 사이 다른 호출이 이미 살려 놨으면 그것을 쓴다
-        if !guard.is_closed() {
-            return Ok(guard.clone());
+        // 락을 잡는 사이 이미 복구됐으면 그것을 쓴다
+        {
+            let current = self.client.read().await.clone();
+            if !current.is_closed() {
+                return Ok(current);
+            }
         }
 
+        // 연결은 어떤 client 락도 들지 않은 채 시도한다 (타임아웃은 connect 안에 있다).
+        // 이전 구현은 쓰기 락을 든 상태로 connect 를 await 해서, connect 가 멈추면
+        // 락이 영구히 잡히고 tokio RwLock 의 공정 큐 때문에 모든 읽기까지 막혀
+        // 프로세스 전체가 교착됐다 (2026-10-31, 12일간 수집 중단).
         let client = Self::connect(&self.connection_string).await?;
+
+        // 교체만 짧게. 이 블록 안에서는 await 하지 않는다.
+        *self.client.write().await = client.clone();
+
         tracing::warn!("Database connection was closed; reconnected");
-        *guard = client.clone();
         Ok(client)
     }
 

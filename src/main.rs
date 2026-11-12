@@ -37,16 +37,29 @@ async fn background_data_collector(agent: MTConnectAgent, db: Arc<DatabaseServic
             let cnc_data = device.to_cnc_data(&machine_id, 1);
 
             // 실시간 상태 업데이트
-            if let Err(e) = db.update_machine_status(&cnc_data).await {
-                eprintln!("[Collector] Failed to update status for {}: {:?}", machine_id, e);
-                error_count += 1;
-            } else {
-                success_count += 1;
-            }
+            let status_ok = match db.update_machine_status(&cnc_data).await {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("[Collector] Failed to update status for {}: {:?}", machine_id, e);
+                    false
+                }
+            };
 
             // 이력 저장
-            if let Err(e) = db.save_machine_data_history(&cnc_data).await {
-                eprintln!("[Collector] Failed to save history for {}: {:?}", machine_id, e);
+            let history_ok = match db.save_machine_data_history(&cnc_data).await {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("[Collector] Failed to save history for {}: {:?}", machine_id, e);
+                    false
+                }
+            };
+
+            // 이력 실패도 반드시 집계한다. 이전에는 상태만 세어서, 이력 저장이
+            // 전부 실패하는 동안에도 "Collected data from N devices" 가 찍혔다.
+            if status_ok && history_ok {
+                success_count += 1;
+            } else {
+                error_count += 1;
             }
         }
 

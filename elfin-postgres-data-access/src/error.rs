@@ -18,6 +18,15 @@ pub enum DatabaseError {
     /// 환경 변수 관련 에러
     #[error("Environment variable error: {0}")]
     EnvVar(#[from] std::env::VarError),
+
+    /// 연결 시도가 제한 시간을 넘김.
+    /// 타임아웃이 없으면 tokio_postgres::connect 가 영구히 멈출 수 있다.
+    #[error("Database connect timed out after {0:?}")]
+    ConnectTimeout(std::time::Duration),
+
+    /// 다른 호출이 이미 재연결 중이다. 기다리지 않고 이번 주기를 넘긴다.
+    #[error("Database reconnect already in progress")]
+    ReconnectBusy,
 }
 
 /// Result 타입 별칭: Result<T, DatabaseError>
