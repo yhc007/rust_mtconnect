@@ -163,8 +163,13 @@ impl MTConnectAgent {
 
                         match req {
                             Ok(request) => {
-                                match client.request(request).await {
-                                    Ok(res) => {
+                                // 불통 에이전트에 영구 대기하지 않도록 5초 제한.
+                                // 수집 경로(fetch_current_with_devices)와 동일하게 둔다.
+                                match tokio::time::timeout(
+                                    Duration::from_secs(5),
+                                    client.request(request)
+                                ).await {
+                                    Ok(Ok(res)) => {
                                         if res.status().is_success() {
                                             let body = res.into_body();
                                             match body.collect().await {
@@ -181,7 +186,7 @@ impl MTConnectAgent {
                                             None
                                         }
                                     }
-                                    Err(_) => None,
+                                    _ => None, // 타임아웃 또는 에러
                                 }
                             }
                             Err(_) => None,
@@ -308,8 +313,13 @@ impl MTConnectAgent {
 
                         match req {
                             Ok(request) => {
-                                match client.request(request).await {
-                                    Ok(res) => {
+                                // 불통 에이전트에 영구 대기하지 않도록 5초 제한.
+                                // 수집 경로(fetch_current_with_devices)와 동일하게 둔다.
+                                match tokio::time::timeout(
+                                    Duration::from_secs(5),
+                                    client.request(request)
+                                ).await {
+                                    Ok(Ok(res)) => {
                                         if res.status().is_success() {
                                             let body = res.into_body();
                                             match body.collect().await {
@@ -326,7 +336,7 @@ impl MTConnectAgent {
                                             None
                                         }
                                     }
-                                    Err(_) => None,
+                                    _ => None, // 타임아웃 또는 에러
                                 }
                             }
                             Err(_) => None,
