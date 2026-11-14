@@ -163,29 +163,24 @@ impl MTConnectAgent {
 
                         match req {
                             Ok(request) => {
-                                // 불통 에이전트에 영구 대기하지 않도록 5초 제한.
-                                // 수집 경로(fetch_current_with_devices)와 동일하게 둔다.
-                                match tokio::time::timeout(
-                                    Duration::from_secs(5),
-                                    client.request(request)
-                                ).await {
-                                    Ok(Ok(res)) => {
-                                        if res.status().is_success() {
-                                            let body = res.into_body();
-                                            match body.collect().await {
-                                                Ok(collected) => {
-                                                    let bytes: Bytes = collected.to_bytes();
-                                                    match String::from_utf8(bytes.to_vec()) {
-                                                        Ok(content) => Some((device_name_clone, content)),
-                                                        Err(_) => None,
-                                                    }
-                                                }
-                                                Err(_) => None,
-                                            }
-                                        } else {
-                                            None
-                                        }
+                                // 요청과 본문 수신을 "한 번에" 감싼다.
+                                //
+                                // client.request() 만 감싸면 응답 헤더까지만 제한된다.
+                                // 에이전트가 헤더만 보내고 멈추면 body.collect() 가
+                                // 무제한 대기하고, 10대를 함께 기다리므로 수집 주기
+                                // 전체가 영구히 멈춘다 (2026-10-31, 13일간 중단).
+                                let fetch = async {
+                                    let res = client.request(request).await.ok()?;
+                                    if !res.status().is_success() {
+                                        return None;
                                     }
+                                    let collected = res.into_body().collect().await.ok()?;
+                                    let bytes: Bytes = collected.to_bytes();
+                                    String::from_utf8(bytes.to_vec()).ok()
+                                };
+
+                                match tokio::time::timeout(Duration::from_secs(5), fetch).await {
+                                    Ok(Some(content)) => Some((device_name_clone, content)),
                                     _ => None, // 타임아웃 또는 에러
                                 }
                             }
@@ -313,29 +308,24 @@ impl MTConnectAgent {
 
                         match req {
                             Ok(request) => {
-                                // 불통 에이전트에 영구 대기하지 않도록 5초 제한.
-                                // 수집 경로(fetch_current_with_devices)와 동일하게 둔다.
-                                match tokio::time::timeout(
-                                    Duration::from_secs(5),
-                                    client.request(request)
-                                ).await {
-                                    Ok(Ok(res)) => {
-                                        if res.status().is_success() {
-                                            let body = res.into_body();
-                                            match body.collect().await {
-                                                Ok(collected) => {
-                                                    let bytes: Bytes = collected.to_bytes();
-                                                    match String::from_utf8(bytes.to_vec()) {
-                                                        Ok(content) => Some((device_name_clone, content)),
-                                                        Err(_) => None,
-                                                    }
-                                                }
-                                                Err(_) => None,
-                                            }
-                                        } else {
-                                            None
-                                        }
+                                // 요청과 본문 수신을 "한 번에" 감싼다.
+                                //
+                                // client.request() 만 감싸면 응답 헤더까지만 제한된다.
+                                // 에이전트가 헤더만 보내고 멈추면 body.collect() 가
+                                // 무제한 대기하고, 10대를 함께 기다리므로 수집 주기
+                                // 전체가 영구히 멈춘다 (2026-10-31, 13일간 중단).
+                                let fetch = async {
+                                    let res = client.request(request).await.ok()?;
+                                    if !res.status().is_success() {
+                                        return None;
                                     }
+                                    let collected = res.into_body().collect().await.ok()?;
+                                    let bytes: Bytes = collected.to_bytes();
+                                    String::from_utf8(bytes.to_vec()).ok()
+                                };
+
+                                match tokio::time::timeout(Duration::from_secs(5), fetch).await {
+                                    Ok(Some(content)) => Some((device_name_clone, content)),
                                     _ => None, // 타임아웃 또는 에러
                                 }
                             }
@@ -411,28 +401,24 @@ impl MTConnectAgent {
 
                         match req {
                             Ok(request) => {
-                                // 5초 타임아웃 적용
-                                match tokio::time::timeout(
-                                    Duration::from_secs(5),
-                                    client.request(request)
-                                ).await {
-                                    Ok(Ok(res)) => {
-                                        if res.status().is_success() {
-                                            let body = res.into_body();
-                                            match body.collect().await {
-                                                Ok(collected) => {
-                                                    let bytes: Bytes = collected.to_bytes();
-                                                    match String::from_utf8(bytes.to_vec()) {
-                                                        Ok(content) => Some((device_name_clone, content)),
-                                                        Err(_) => None,
-                                                    }
-                                                }
-                                                Err(_) => None,
-                                            }
-                                        } else {
-                                            None
-                                        }
+                                // 요청과 본문 수신을 "한 번에" 감싼다.
+                                //
+                                // client.request() 만 감싸면 응답 헤더까지만 제한된다.
+                                // 에이전트가 헤더만 보내고 멈추면 body.collect() 가
+                                // 무제한 대기하고, 10대를 함께 기다리므로 수집 주기
+                                // 전체가 영구히 멈춘다 (2026-10-31, 13일간 중단).
+                                let fetch = async {
+                                    let res = client.request(request).await.ok()?;
+                                    if !res.status().is_success() {
+                                        return None;
                                     }
+                                    let collected = res.into_body().collect().await.ok()?;
+                                    let bytes: Bytes = collected.to_bytes();
+                                    String::from_utf8(bytes.to_vec()).ok()
+                                };
+
+                                match tokio::time::timeout(Duration::from_secs(5), fetch).await {
+                                    Ok(Some(content)) => Some((device_name_clone, content)),
                                     _ => None, // 타임아웃 또는 에러
                                 }
                             }
